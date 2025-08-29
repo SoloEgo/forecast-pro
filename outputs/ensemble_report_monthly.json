@@ -1,0 +1,63 @@
+{
+  "weights": {
+    "lgbm": 0.7377632493976277,
+    "cat": 0.08534842124361114,
+    "snaive": 0.17688832935876123
+  },
+  "folds": [
+    {
+      "fold": 0,
+      "train_start": "2015-12-31T00:00:00",
+      "train_end": "2019-12-31T00:00:00",
+      "test_start": "2020-01-31T00:00:00",
+      "test_end": "2020-12-31T00:00:00",
+      "n_train": 49,
+      "n_test": 12,
+      "experts": [
+        {
+          "name": "lgbm",
+          "pinball_p50": 45.03649613969029,
+          "status": "ok"
+        },
+        {
+          "name": "cat",
+          "pinball_p50": 49.953123468156456,
+          "status": "ok"
+        },
+        {
+          "name": "snaive",
+          "pinball_p50": 31.75,
+          "status": "ok"
+        }
+      ],
+      "winner": "snaive"
+    },
+    {
+      "fold": 1,
+      "train_start": "2015-12-31T00:00:00",
+      "train_end": "2023-12-31T00:00:00",
+      "test_start": "2024-01-31T00:00:00",
+      "test_end": "2024-12-31T00:00:00",
+      "n_train": 97,
+      "n_test": 12,
+      "experts": [
+        {
+          "name": "lgbm",
+          "pinball_p50": 163.49033631606366,
+          "status": "ok"
+        },
+        {
+          "name": "cat",
+          "pinball_p50": 276.7779115708409,
+          "status": "ok"
+        },
+        {
+          "name": "snaive",
+          "pinball_p50": 255.04166666666666,
+          "status": "ok"
+        }
+      ],
+      "winner": "lgbm"
+    }
+  ]
+}
