@@ -15,6 +15,7 @@ from src.pro.smart_train import main as smart_train_main
 from src.pro.forecast import main as forecast_main
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from base64 import b64encode
 
 try:
     _rerun = st.rerun            # новые версии (>=1.30)
@@ -42,6 +43,14 @@ st.set_page_config(page_title="ForecastPro", page_icon=page_icon, layout="wide")
 # ====== CSS: блюр + оверлей ======
 st.markdown("""
 <style>
+.stHorizontalBlock {
+    justify-content: start !important;
+    flex-wrap: nowrap;
+}
+.stHorizontalBlock>div {
+    min-width: fit-content;
+}
+
 [data-testid="stSidebarUserContent"]{
 margin-top: -3rem;
 }
@@ -109,9 +118,16 @@ _init("sku_sel", None)
 
 # ====== Header ======
 col1, col2 = st.columns([1, 12])
+img_b64 = b64encode(Path(LOGO_BIG).read_bytes()).decode()
 with col1:
     if Path(LOGO_BIG).exists():
-        st.image(LOGO_BIG)
+        with st.container():
+            st.markdown(
+                f"<img src='data:image/png;base64,{img_b64}' "
+                f"style='width:72px;height:auto;display:block;'/>",
+                unsafe_allow_html=True
+            )
+            # st.image(LOGO_BIG)  # обычный вызов
     else:
         st.markdown("<div style='font-size:48px'>📈</div>", unsafe_allow_html=True)
 with col2:
