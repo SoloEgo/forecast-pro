@@ -45,7 +45,7 @@ st.markdown("""
 [data-testid="stSidebarUserContent"]{
 margin-top: -3rem;
 }
-[data-testid="stStatusWidget"]{
+[data-testid="stStatusWidget"], .stToolbarActions{
     display: none;
 }
 header.stAppHeader {
