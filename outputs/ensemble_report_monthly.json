@@ -1,63 +1,141 @@
 {
-  "weights": {
-    "lgbm": 0.7377632493976277,
-    "cat": 0.08534842124361114,
-    "snaive": 0.17688832935876123
-  },
-  "folds": [
+  "generated_at": "2025-08-31T10:22:25.382044Z",
+  "freq": "monthly",
+  "eta": 5.0,
+  "halflife": 18,
+  "rows": 256,
+  "features_total": 55,
+  "y_col": "qty",
+  "date_min": "2023-01-31 00:00:00",
+  "date_max": "2025-08-31 00:00:00",
+  "cv_folds": 3,
+  "horizon": 12,
+  "experts": [
     {
-      "fold": 0,
-      "train_start": "2015-12-31T00:00:00",
-      "train_end": "2019-12-31T00:00:00",
-      "test_start": "2020-01-31T00:00:00",
-      "test_end": "2020-12-31T00:00:00",
-      "n_train": 49,
-      "n_test": 12,
-      "experts": [
-        {
-          "name": "lgbm",
-          "pinball_p50": 45.03649613969029,
-          "status": "ok"
-        },
-        {
-          "name": "cat",
-          "pinball_p50": 49.953123468156456,
-          "status": "ok"
-        },
-        {
-          "name": "snaive",
-          "pinball_p50": 31.75,
-          "status": "ok"
-        }
+      "name": "lgbm",
+      "class": "LGBMQuantile",
+      "feature_names": [
+        "sku",
+        "category",
+        "month",
+        "month_sin",
+        "month_cos",
+        "quarter",
+        "y_lag1",
+        "y_lag3",
+        "y_lag6",
+        "y_lag12",
+        "mean_3m",
+        "mean_6m",
+        "mean_12m",
+        "promo_flag",
+        "promo_share_3m",
+        "promo_share_6m",
+        "promo_share_12m",
+        "oos_flag",
+        "grp_qty_excl_lag1",
+        "grp_qty_excl_lag3",
+        "grp_qty_excl_lag6",
+        "grp_qty_excl_lag12",
+        "grp_mean_excl_3m",
+        "grp_mean_excl_6m",
+        "grp_mean_excl_12m",
+        "grp_trend_excl_3m",
+        "comp_price_index",
+        "comp_qty_index",
+        "comp_promo_flag",
+        "comp_price_index_lag1",
+        "comp_price_index_lag3",
+        "comp_price_index_lag6",
+        "comp_price_index_lag12",
+        "comp_qty_index_lag1",
+        "comp_qty_index_lag3",
+        "comp_qty_index_lag6",
+        "comp_qty_index_lag12",
+        "comp_promo_flag_lag1",
+        "comp_promo_flag_lag3",
+        "comp_promo_flag_lag6",
+        "comp_promo_flag_lag12",
+        "comp_price_index_mean_3m",
+        "comp_price_index_mean_6m",
+        "comp_price_index_mean_12m",
+        "comp_qty_index_mean_3m",
+        "comp_qty_index_mean_6m",
+        "comp_qty_index_mean_12m",
+        "comp_promo_share_3m",
+        "comp_promo_share_6m",
+        "comp_promo_share_12m"
       ],
-      "winner": "snaive"
+      "cat_cols": [
+        "sku",
+        "category"
+      ]
     },
     {
-      "fold": 1,
-      "train_start": "2015-12-31T00:00:00",
-      "train_end": "2023-12-31T00:00:00",
-      "test_start": "2024-01-31T00:00:00",
-      "test_end": "2024-12-31T00:00:00",
-      "n_train": 97,
-      "n_test": 12,
-      "experts": [
-        {
-          "name": "lgbm",
-          "pinball_p50": 163.49033631606366,
-          "status": "ok"
-        },
-        {
-          "name": "cat",
-          "pinball_p50": 276.7779115708409,
-          "status": "ok"
-        },
-        {
-          "name": "snaive",
-          "pinball_p50": 255.04166666666666,
-          "status": "ok"
-        }
+      "name": "cat",
+      "class": "CatBoostQuantile",
+      "feature_names": [
+        "sku",
+        "category",
+        "month",
+        "month_sin",
+        "month_cos",
+        "quarter",
+        "y_lag1",
+        "y_lag3",
+        "y_lag6",
+        "y_lag12",
+        "mean_3m",
+        "mean_6m",
+        "mean_12m",
+        "promo_flag",
+        "promo_share_3m",
+        "promo_share_6m",
+        "promo_share_12m",
+        "oos_flag",
+        "grp_qty_excl_lag1",
+        "grp_qty_excl_lag3",
+        "grp_qty_excl_lag6",
+        "grp_qty_excl_lag12",
+        "grp_mean_excl_3m",
+        "grp_mean_excl_6m",
+        "grp_mean_excl_12m",
+        "grp_trend_excl_3m",
+        "comp_price_index",
+        "comp_qty_index",
+        "comp_promo_flag",
+        "comp_price_index_lag1",
+        "comp_price_index_lag3",
+        "comp_price_index_lag6",
+        "comp_price_index_lag12",
+        "comp_qty_index_lag1",
+        "comp_qty_index_lag3",
+        "comp_qty_index_lag6",
+        "comp_qty_index_lag12",
+        "comp_promo_flag_lag1",
+        "comp_promo_flag_lag3",
+        "comp_promo_flag_lag6",
+        "comp_promo_flag_lag12",
+        "comp_price_index_mean_3m",
+        "comp_price_index_mean_6m",
+        "comp_price_index_mean_12m",
+        "comp_qty_index_mean_3m",
+        "comp_qty_index_mean_6m",
+        "comp_qty_index_mean_12m",
+        "comp_promo_share_3m",
+        "comp_promo_share_6m",
+        "comp_promo_share_12m"
       ],
-      "winner": "lgbm"
+      "cat_cols": [
+        "sku",
+        "category"
+      ]
+    },
+    {
+      "name": "snaive",
+      "class": "SeasonalNaiveQuantile",
+      "feature_names": null,
+      "cat_cols": null
     }
   ]
 }

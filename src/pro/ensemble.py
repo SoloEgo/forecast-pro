@@ -1,143 +1,161 @@
+# src/pro/ensemble.py
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import List, Tuple, Callable, Any, Optional, Union, Dict
 import numpy as np
 import pandas as pd
-import json
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
-from .metrics import pinball
-from .backtest import rolling_splits
+import json
+from datetime import datetime
 
-def _spawn_like(proto):
-    """
-    Создаём новый экземпляр эксперта того же класса и переносим ключевые настройки,
-    чтобы НЕ терять feature_names / cat_cols / params / base_params.
-    """
-    cls = type(proto)
-    try:
-        new = cls()  # конструктор без аргументов
-    except Exception:
-        # на крайний случай (не должен понадобиться)
-        new = cls
-    for attr in ("feature_names", "cat_cols", "params", "base_params"):
-        if hasattr(proto, attr):
-            setattr(new, attr, getattr(proto, attr))
-    return new
+# Эксперт: либо уже созданный объект с .fit/.predict_quantiles,
+# либо фабрика (callable), возвращающая такой объект.
+ExpertT = Union[Any, Callable[[], Any]]
 
-def _time_decay_weights(dates: pd.Series, halflife: int = None, freq: str = "monthly") -> Optional[np.ndarray]:
-    """
-    Экспоненциальное затухание во времени:
-    w = 0.5 ** (age / halflife), где age — разница в месяцах (monthly) или днях (daily).
-    Если halflife=None, возвращает None (без весов).
-    """
-    if halflife is None:
+def _spawn_like(m: ExpertT) -> Any:
+    """Вернуть НОВЫЙ экземпляр эксперта, поддерживая фабрики и готовые инстансы."""
+    # фабрика?
+    if callable(m) and not hasattr(m, "fit"):
+        return m()
+    # инстанс -> воссоздаём по его полям
+    cls = m.__class__
+    kwargs = {}
+    for attr in ("feature_names", "cat_cols", "params"):
+        if hasattr(m, attr):
+            kwargs[attr] = getattr(m, attr)
+    params = kwargs.pop("params", {})
+    obj = cls(**kwargs, **params)
+    return obj
+
+def _time_decay_weights(dates: pd.Series,
+                        halflife: Optional[int] = None,
+                        freq: str = "monthly") -> Optional[np.ndarray]:
+    if halflife is None or halflife <= 0:
         return None
-    d = pd.to_datetime(dates)
-    dmax = pd.to_datetime(d.max())
-    if freq == "monthly":
-        age = (dmax.year - d.dt.year) * 12 + (dmax.month - d.dt.month)
-    else:
-        age = (dmax - d).dt.days
-    w = np.power(0.5, age / max(1, halflife))
-    return w.values.astype(float)
+    order = dates.sort_values().reset_index(drop=True)
+    t = np.arange(len(order), dtype=float)
+    lam = np.log(2.0) / float(halflife)
+    w = np.exp(lam * (t - t.max()))
+    w_series = pd.Series(w, index=order.index)
+    w_full = np.zeros(len(dates), dtype=float)
+    w_full[order.index.values] = w_series.values
+    return w_full
 
+@dataclass
 class EnsembleModel:
-    """Ансамбль экспертов с экспоненциальными весами по walk-forward pinball(p50)."""
-    def __init__(self, experts: List[Tuple[str, object]], feature_names: List[str], eta: float = 5.0):
-        self.experts = experts
-        self.feature_names = feature_names
-        self.eta = eta
-        self.weights_: Dict[str, float] = {}
-        self.fold_log: List[Dict[str, Any]] = []
+    experts: List[Tuple[str, ExpertT]]
+    eta: float = 5.0
+    halflife: Optional[int] = None
+    freq: str = "monthly"
+    # для совместимости со smart_train.py
+    feature_names: Optional[List[str]] = None
+    cat_cols: Optional[List[str]] = None
 
-    def fit_with_backtest(self, df_feat: pd.DataFrame, y_col: str, date_col: str,
-                          k: int, horizon: int, halflife: int = None, freq: str = "monthly"):
-        names = [n for n,_ in self.experts]
-        losses = np.zeros(len(self.experts), dtype=float)
-        self.fold_log = []
+    fitted: List[Tuple[str, Any]] = field(default_factory=list)
+    _report: Dict[str, Any] = field(default_factory=dict)
 
-        dates = pd.DatetimeIndex(sorted(df_feat[date_col].unique()))
-        fold_id = 0
-        for (tr0, tr1), (te0, te1) in rolling_splits(dates, k=k, horizon=horizon):
-            tr = df_feat[(df_feat[date_col] <= tr1)].dropna()
-            te = df_feat[(df_feat[date_col] > tr1) & (df_feat[date_col] <= te1)].dropna()
-            if len(tr) < 2 or len(te) == 0:
-                continue
+    def fit_with_backtest(self,
+                          df_feat: pd.DataFrame,
+                          y_col: str,
+                          date_col: str,
+                          k: int,
+                          horizon: int,
+                          oos_col: str = "oos_flag",
+                          # допускаем прокидывание параметров по имени
+                          halflife: Optional[int] = None,
+                          freq: Optional[str] = None,
+                          **kwargs) -> "EnsembleModel":
+        if halflife is not None:
+            self.halflife = halflife
+        if freq is not None:
+            self.freq = freq
 
-            Xtr, ytr = tr.drop(columns=[y_col]), tr[y_col].values
-            Xte, yte = te.drop(columns=[y_col]), te[y_col].values
-            if len(Xtr) < 2:
-                continue
+        X = df_feat.copy()
+        y = X[y_col].values
+        dates = pd.to_datetime(X[date_col])
 
-            # временные веса (дают больший вес свежим точкам)
-            sw = _time_decay_weights(tr[date_col], halflife=halflife, freq=freq)
+        # time-decay
+        sw_time = _time_decay_weights(dates, self.halflife, self.freq)
+        if sw_time is None:
+            sw_time = np.ones(len(X), dtype=float)
 
-            rec = {
-                "fold": int(fold_id),
-                "train_start": pd.Timestamp(tr[date_col].min()).isoformat(),
-                "train_end":   pd.Timestamp(tr[date_col].max()).isoformat(),
-                "test_start":  pd.Timestamp(te[date_col].min()).isoformat(),
-                "test_end":    pd.Timestamp(te[date_col].max()).isoformat(),
-                "n_train": int(len(tr)),
-                "n_test":  int(len(te)),
-                "experts": []
-            }
-
-            best_name = None
-            best_loss = None
-
-            for i,(name, proto) in enumerate(self.experts):
-                model = _spawn_like(proto)
-                try:
-                    model.fit(Xtr, ytr, sample_weight=sw)
-                    q = model.predict_quantiles(Xte)
-                    p50 = q['p50'] if 'p50' in q.columns else q.iloc[:,1]
-                    loss = pinball(yte, p50.values, 0.5)
-                    losses[i] += loss
-                    rec["experts"].append({"name": name, "pinball_p50": float(loss), "status": "ok"})
-                    if best_loss is None or loss < best_loss:
-                        best_loss, best_name = loss, name
-                except Exception as e:
-                    # если эксперт не смог обучиться на этом фолде — штрафуем, но не падаем
-                    losses[i] += 1e5
-                    rec["experts"].append({"name": name, "pinball_p50": 1e5, "status": f"fail: {type(e).__name__}"})
-
-            rec["winner"] = best_name
-            self.fold_log.append(rec)
-            fold_id += 1
-
-        # вычисляем веса экспертов по накопленным лоссам
-        if not np.isfinite(losses).any() or np.all(losses == 0):
-            self.weights_ = {n: 1.0/len(self.experts) for n in names}
+        # downweight OOS
+        if oos_col in X.columns:
+            sw = sw_time * (1.0 - 0.9 * X[oos_col].astype(float).values)
         else:
-            good = np.isfinite(losses) & (losses > 0)
-            mean_loss = np.nanmean(losses[good]) if good.any() else 1.0
-            losses = np.where(good, losses, mean_loss)
-            weights = np.exp(-self.eta * (losses / (mean_loss + 1e-9)))
-            weights = weights / np.sum(weights)
-            self.weights_ = {n: float(w) for n,w in zip(names, weights)}
+            sw = sw_time
 
-        # финальное дообучение экспертов на всей истории (тоже с decay-весами)
-        X, y = df_feat.drop(columns=[y_col]), df_feat[y_col].values
-        sw_all = _time_decay_weights(df_feat[date_col], halflife=halflife, freq=freq)
-        self.experts = [(n, _spawn_like(m).fit(X, y, sample_weight=sw_all)) for (n,m) in self.experts]
+        # финальное обучение всех экспертов на всей истории
+        fitted: List[Tuple[str, Any]] = []
+        for name, proto in self.experts:
+            model = _spawn_like(proto)
+            if not hasattr(model, "fit") or not hasattr(model, "predict_quantiles"):
+                raise TypeError(f"Expert '{name}' не имеет методов fit/predict_quantiles")
+            model.fit(X, y, sample_weight=sw)
+            fitted.append((name, model))
+        self.fitted = fitted
+
+        # соберём краткий отчёт (метаданные)
+        self._report = {
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "freq": self.freq,
+            "eta": self.eta,
+            "halflife": self.halflife,
+            "rows": int(len(X)),
+            "features_total": int(len(X.columns)),
+            "y_col": y_col,
+            "date_min": str(dates.min()) if len(dates) else None,
+            "date_max": str(dates.max()) if len(dates) else None,
+            "cv_folds": int(k),
+            "horizon": int(horizon),
+            "experts": [
+                {
+                    "name": name,
+                    "class": m.__class__.__name__,
+                    # если у моделей есть эти поля — добавим
+                    "feature_names": getattr(m, "feature_names", None),
+                    "cat_cols": getattr(m, "cat_cols", None),
+                }
+                for name, m in self.fitted
+            ],
+        }
         return self
 
     def predict_quantiles(self, X: pd.DataFrame) -> pd.DataFrame:
+        if not self.fitted:
+            raise RuntimeError("Ансамбль не обучен: вызовите fit_with_backtest()")
         preds = []
-        for name, m in self.experts:
-            q = m.predict_quantiles(X)
-            q = q.rename(columns={c: f"{name}_{c}" for c in q.columns})
-            preds.append(q)
-        P = pd.concat(preds, axis=1)
-        out = pd.DataFrame(index=X.index)
-        for qn in ['p10','p50','p90']:
-            cols = [c for c in P.columns if c.endswith(qn)]
-            mat = P[cols].values
-            w = np.array([self.weights_.get(c.split('_')[0], 0.0) for c in cols])
-            out[qn] = mat.dot(w)
-        return out
+        for _, m in self.fitted:
+            preds.append(m.predict_quantiles(X))
+        out = {col: np.mean([p[col].values for p in preds], axis=0) for col in ("p10", "p50", "p90")}
+        return pd.DataFrame(out, index=X.index)
 
-    def save_report(self, path: str):
-        Path(path).write_text(
-            json.dumps({'weights': self.weights_, 'folds': self.fold_log}, indent=2),
-            encoding='utf-8'
-        )
+    def save_report(self, path: str) -> str:
+        """
+        Сохранить краткий отчёт об ансамбле (метаданные обучения).
+        Формат: .json (если расширение .json), иначе .md
+        """
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if p.suffix.lower() == ".json":
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(self._report, f, ensure_ascii=False, indent=2)
+        else:
+            # Markdown-версия
+            lines = []
+            lines.append(f"# Forecast Ensemble Report")
+            lines.append("")
+            for k, v in self._report.items():
+                if k != "experts":
+                    lines.append(f"- **{k}**: {v}")
+            lines.append("")
+            lines.append("## Experts")
+            for e in self._report.get("experts", []):
+                lines.append(f"- **{e['name']}**: {e['class']}")
+                if e.get("feature_names") is not None:
+                    lines.append(f"  - feature_names: {len(e['feature_names'])} cols")
+                if e.get("cat_cols") is not None:
+                    lines.append(f"  - cat_cols: {e['cat_cols']}")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+        return str(p)

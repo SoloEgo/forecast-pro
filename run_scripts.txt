@@ -1,0 +1,32 @@
+1) Запуск HPO для LightGBM
+python -m src.pro.optimize \
+  --input data/sales_monthly_full_example.csv \
+  --algo lgbm \
+  --freq monthly \
+  --horizon 12 \
+  --cv 3 \
+  --trials 60
+
+2) (опционально) Запуск HPO для CatBoost
+python -m src.pro.optimize \
+  --input data/sales_monthly_full_example.csv \
+  --algo catboost \
+  --freq monthly \
+  --horizon 12 \
+  --cv 3 \
+  --trials 60
+
+3) Использовать лучшие гиперы в ансамбле
+python -m src.pro.smart_train \
+  --input data/sales_monthly_full_example.csv \
+  --freq monthly --horizon 12 --cv 3 --eta 5.0 \
+  --lookback_months 60 \
+  --halflife 18
+
+4) Совместный прогноз (joint) с калибровкой
+python -m src.pro.forecast \
+  --input data/sales_monthly_full_example.csv \
+  --model_path outputs/model_ensemble_monthly.joblib \
+  --freq monthly --horizon 12 \
+  --joint \
+  --calibrate_last_k 6
