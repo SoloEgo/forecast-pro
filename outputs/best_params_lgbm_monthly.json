@@ -1,6 +1,6 @@
 {
-  "n_estimators": 1058,
-  "num_leaves": 29,
-  "learning_rate": 0.1592965612551067,
-  "min_data_in_leaf": 93
+  "n_estimators": 998,
+  "num_leaves": 123,
+  "learning_rate": 0.0452145003135749,
+  "min_data_in_leaf": 100
 }
