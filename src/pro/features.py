@@ -64,13 +64,19 @@ def _ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 # ====== MONTHLY ======
-def add_features(df_in: pd.DataFrame, **kwargs) -> pd.DataFrame:
+def add_features(df_in: pd.DataFrame, id_col: str = "sku", **kwargs) -> pd.DataFrame:
+
     """
     MONTHLY: ожидает date (Timestamp месячный/конец месяца допустим), sku, qty.
     Без .dropna() — пропуски закрываются снаружи ffill в прогнозе.
     """
     df = _ensure_columns(df_in).copy()
     df = df.sort_values(["sku", "date"]).reset_index(drop=True)
+
+    if "oos_flag" in df.columns:
+        df["oos_flag_lag1"] = df.groupby(id_col)["oos_flag"].shift(1)
+        df["oos_flag_lag2"] = df.groupby(id_col)["oos_flag"].shift(2)
+
 
     # Календарь
     df["month"] = df["date"].dt.month
@@ -102,6 +108,11 @@ def add_features(df_in: pd.DataFrame, **kwargs) -> pd.DataFrame:
     df["grp_qty_excl"] = df["grp_qty"] - df["qty"]
 
     df = df.sort_values(["category", "date", "sku"])
+
+    if "oos_flag" in df.columns:
+        df["oos_flag_lag1"] = df.groupby(id_col)["oos_flag"].shift(1)
+        df["oos_flag_lag2"] = df.groupby(id_col)["oos_flag"].shift(2)
+
     for L in [1, 3, 6, 12]:
         df[f"grp_qty_excl_lag{L}"] = df.groupby("category")["grp_qty_excl"].shift(L)
 
@@ -128,15 +139,25 @@ def add_features(df_in: pd.DataFrame, **kwargs) -> pd.DataFrame:
         )
 
     df = df.sort_values(["sku", "date"]).reset_index(drop=True)
+
+    if "oos_flag" in df.columns:
+        df["oos_flag_lag1"] = df.groupby(id_col)["oos_flag"].shift(1)
+        df["oos_flag_lag2"] = df.groupby(id_col)["oos_flag"].shift(2)
+
     return df
 
 # ====== DAILY ======
-def add_features_daily(df_in: pd.DataFrame, **kwargs) -> pd.DataFrame:
+def add_features_daily(df_in: pd.DataFrame, id_col: str = "sku", **kwargs) -> pd.DataFrame:
     """
     DAILY: ожидает date (день), sku, qty. Аналог monthly, но с дневными лагами/окнами.
     """
     df = _ensure_columns(df_in).copy()
     df = df.sort_values(["sku", "date"]).reset_index(drop=True)
+
+    if "oos_flag" in df.columns:
+        df["oos_flag_lag1"] = df.groupby(id_col)["oos_flag"].shift(1)
+        df["oos_flag_lag2"] = df.groupby(id_col)["oos_flag"].shift(2)
+
 
     # Календарь (день)
     dt = df["date"]
@@ -173,6 +194,11 @@ def add_features_daily(df_in: pd.DataFrame, **kwargs) -> pd.DataFrame:
     df["grp_qty_excl"] = df["grp_qty"] - df["qty"]
 
     df = df.sort_values(["category", "date", "sku"])
+
+    if "oos_flag" in df.columns:
+        df["oos_flag_lag1"] = df.groupby(id_col)["oos_flag"].shift(1)
+        df["oos_flag_lag2"] = df.groupby(id_col)["oos_flag"].shift(2)
+
     for L in [1, 7, 14, 28]:
         df[f"grp_qty_excl_lag{L}"] = df.groupby("category")["grp_qty_excl"].shift(L)
 
@@ -199,4 +225,9 @@ def add_features_daily(df_in: pd.DataFrame, **kwargs) -> pd.DataFrame:
         )
 
     df = df.sort_values(["sku", "date"]).reset_index(drop=True)
+
+    if "oos_flag" in df.columns:
+        df["oos_flag_lag1"] = df.groupby(id_col)["oos_flag"].shift(1)
+        df["oos_flag_lag2"] = df.groupby(id_col)["oos_flag"].shift(2)
+
     return df

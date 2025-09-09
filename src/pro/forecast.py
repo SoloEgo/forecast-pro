@@ -198,7 +198,7 @@ def main(input_path: str,
          joint: bool,
          calibrate_last_k: int,
          calibrate_clip_low: float,
-         calibrate_clip_high: float):
+         calibrate_clip_high: float, group_col: str = None, sk_filter: str = None):
     outdir_p = Path(outdir)
     outdir_p.mkdir(parents=True, exist_ok=True)
 
