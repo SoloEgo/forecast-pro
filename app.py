@@ -131,7 +131,7 @@ with col1:
     else:
         st.markdown("<div style='font-size:48px'>📈</div>", unsafe_allow_html=True)
 with col2:
-    st.markdown("<h1 style='margin:0;margin-left: -2rem;'>orecastPro</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='margin:0;margin-left: -50px;'>orecastPro</h1>", unsafe_allow_html=True)
 
 # ====== Рабочие директории ======
 WORKDIR = Path("ui_runtime"); WORKDIR.mkdir(exist_ok=True, parents=True)
