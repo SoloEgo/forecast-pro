@@ -4,6 +4,7 @@ import json
 import pandas as pd
 from joblib import dump
 from typing import Optional
+import re
 
 from .features import add_features, ALL_FEATURES
 from .ensemble import EnsembleModel
@@ -29,14 +30,51 @@ except Exception:
             val = self.last_ if self.last_ is not None else 0.0
             return pd.DataFrame({"p10": [val]*n, "p50": [val]*n, "p90": [val]*n}, index=X.index)
 
-def _load_best_params(outdir: Path, algo: str, freq: str) -> Optional[dict]:
-    fp = outdir / f"best_params_{algo}_{freq}.json"
-    if fp.exists():
+def _load_best_params(outdir: Path, algo: str, freq: str, input_csv: str) -> Optional[dict]:
+    # Priority:
+    # 1) outdir/best_params_by_sk/best_params_{algo}_{freq}__sk=...json
+    # 2) outdir/best_params_{algo}_{freq}.json
+    # 3) outdir/best_params_by_sk/best_params_{freq}__sk=...json (generic)
+    # 4) outdir/best_params_{freq}.json (generic)
+    try:
+        df_in = pd.read_csv(input_csv)
+        if 'SK' in df_in.columns:
+            vals = df_in['SK'].dropna().astype(str).unique()
+            sk = vals[0] if len(vals) == 1 else 'ALL'
+        else:
+            sk = 'ALL'
+    except Exception:
+        sk = 'ALL'
+    # per-SK per-algo
+    p1 = outdir / 'best_params_by_sk' / f"best_params_{algo}_{freq}__sk={_san(sk)}.json"
+    if p1.exists():
         try:
-            return json.loads(fp.read_text(encoding="utf-8"))
+            return json.loads(p1.read_text(encoding='utf-8'))
         except Exception:
-            return None
+            pass
+    # legacy per-algo
+    p0 = outdir / f"best_params_{algo}_{freq}.json"
+    if p0.exists():
+        try:
+            return json.loads(p0.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+    # generic per-SK (if you also save non-algo params)
+    p2 = outdir / 'best_params_by_sk' / f"best_params_{freq}__sk={_san(sk)}.json"
+    if p2.exists():
+        try:
+            return json.loads(p2.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+    # generic legacy
+    p3 = outdir / f"best_params_{freq}.json"
+    if p3.exists():
+        try:
+            return json.loads(p3.read_text(encoding='utf-8'))
+        except Exception:
+            pass
     return None
+
 
 def main(input_path: str, freq: str, horizon: int, cv: int,
          eta: float, outdir: str, lookback_months: Optional[int], halflife: Optional[int]):
@@ -82,8 +120,8 @@ def main(input_path: str, freq: str, horizon: int, cv: int,
     cat_cols_present = [c for c in ["sku", "category"] if c in feature_cols]
 
     # --- Подхват лучших гиперов (если ранее запускался optimize) ---
-    best_lgbm = _load_best_params(outdir_p, "lgbm", freq) or {}
-    best_cat  = _load_best_params(outdir_p, "catboost", freq) or {}
+    best_lgbm = _load_best_params(outdir_p, "lgbm", freq, input_path) or {}
+    best_cat  = _load_best_params(outdir_p, "catboost", freq, input_path) or {}
 
     # --- Эксперты ---
     lgbm = LGBMQuantile(feature_names=feature_cols, cat_cols=cat_cols_present, **best_lgbm)
@@ -132,3 +170,6 @@ if __name__ == "__main__":
 
     main(args.input, args.freq, args.horizon, args.cv,
          args.eta, args.outdir, args.lookback_months, args.halflife)
+
+def _san(s: str) -> str:
+    return re.sub(r"[^0-9A-Za-z._-]+", "_", str(s))[:80] or "ALL"

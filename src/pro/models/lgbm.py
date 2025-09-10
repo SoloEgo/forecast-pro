@@ -1,92 +1,88 @@
+# src/pro/models/lgbm.py
+from __future__ import annotations
 import numpy as np
 import pandas as pd
-from typing import List, Optional
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
-from lightgbm import LGBMRegressor, log_evaluation
-
-class _ConstModel:
-    """Простой бэкап: предсказывает константную квантиль по трейну."""
-    def __init__(self, value: float):
-        self.value = float(value)
-    def predict(self, X: pd.DataFrame):
-        return np.full(len(X), self.value, dtype=float)
+import lightgbm as lgb
+from pandas.api.types import is_numeric_dtype, is_categorical_dtype
 
 class LGBMQuantile:
-    """Квантильный бустинг (LightGBM) с автоподстройкой гиперов и бэкапом на крошечных окнах."""
-    def __init__(
-        self,
-        n_estimators: int = 800,
-        num_leaves: int = 64,
-        learning_rate: float = 0.05,
-        min_data_in_leaf: int = 50,
-        feature_names: Optional[List[str]] = None,
-        cat_cols: Optional[List[str]] = None,
-    ):
-        self.m = {}
-        self.feature_names = feature_names or []
-        self.cat_cols = cat_cols or ['sku']
-        self.base_params = dict(
-            n_estimators=n_estimators,
-            num_leaves=num_leaves,
-            learning_rate=learning_rate,
-            min_data_in_leaf=min_data_in_leaf,
-            random_state=42,
-            verbosity=-1,          # тише
-            force_col_wise=True,   # убираем подсказки
+    """
+    Три отдельные модели LightGBM под p10/p50/p90.
+    - Параметры из Optuna пробрасываются в каждый регрессор.
+    - Признаки берутся только из feature_names.
+    - object-колонки -> pandas 'category' (и передаются как categorical_feature).
+    - fit поддерживает sample_weight.
+    - predict_quantiles возвращает DataFrame с колонками ['p10','p50','p90'].
+    - Встроенная страховка: неотрицательность и монотонность квантилей.
+    """
+
+    def __init__(self, feature_names, **params):
+        self.feature_names = list(feature_names)
+        self.params = dict(params)
+        self.m_10 = None
+        self.m_50 = None
+        self.m_90 = None
+        self.categorical_cols: list[str] = []
+
+    def _prepare_X(self, X: pd.DataFrame) -> pd.DataFrame:
+        Xsub = X[self.feature_names].copy()
+        self.categorical_cols = []
+        for c in Xsub.columns:
+            s = Xsub[c]
+            if s.dtype == object:
+                Xsub[c] = s.astype('category')
+                self.categorical_cols.append(c)
+            elif is_categorical_dtype(s):
+                self.categorical_cols.append(c)
+            elif not is_numeric_dtype(s):
+                Xsub[c] = pd.to_numeric(s, errors='coerce').astype(float).fillna(0.0)
+        return Xsub
+
+    def _make(self, alpha: float):
+        # молчим по умолчанию
+        params = dict(objective='quantile', alpha=alpha, **self.params)
+        params.setdefault('verbosity', -1)
+        return lgb.LGBMRegressor(**params)
+
+    def fit(self, X: pd.DataFrame, y: pd.Series, sample_weight=None):
+        Xsub = self._prepare_X(X)
+        self.m_10 = self._make(0.1).fit(
+            Xsub, y, sample_weight=sample_weight,
+            categorical_feature=self.categorical_cols or 'auto'
         )
-
-    def _make_preprocessor(self, X: pd.DataFrame):
-        feat_present = [c for c in self.feature_names if c in X.columns]
-        cats_present = [c for c in self.cat_cols if c in feat_present]
-        try:
-            ohe = OneHotEncoder(handle_unknown='ignore', sparse_output=False)
-        except TypeError:
-            ohe = OneHotEncoder(handle_unknown='ignore', sparse=False)
-        if cats_present:
-            prep = ColumnTransformer([('ohe', ohe, cats_present)], remainder='passthrough')
-        else:
-            from sklearn.preprocessing import FunctionTransformer
-            prep = FunctionTransformer(lambda x: x, feature_names_out='one-to-one')
-        return prep, feat_present
-
-    def _adaptive_params(self, n_train: int):
-        """Смягчаем параметры под маленькое окно."""
-        p = self.base_params.copy()
-        p['num_leaves'] = max(2, min(p.get('num_leaves', 64), n_train - 1 if n_train > 2 else 2))
-        p['min_data_in_leaf'] = max(1, min(p.get('min_data_in_leaf', 20), max(1, n_train // 10)))
-        p['min_data_in_bin'] = max(1, n_train // 10)
-        return p
-
-    def fit(self, X: pd.DataFrame, y, sample_weight=None):
-        prep, feat_present = self._make_preprocessor(X)
-        n_train = len(y)
-        params = self._adaptive_params(n_train)
-
-        for a in [0.1, 0.5, 0.9]:
-            const_fallback = _ConstModel(np.quantile(y, a))
-            model = LGBMRegressor(objective='quantile', alpha=a, **params)
-            pipe = Pipeline(steps=[('prep', prep), ('m', model)])
-            try:
-                pipe.fit(
-                    X[feat_present], y,
-                    m__sample_weight=sample_weight,
-                    m__callbacks=[log_evaluation(period=0)]
-                )
-                self.m[a] = pipe
-            except Exception:
-                self.m[a] = const_fallback
-        self._feat_present = feat_present
+        self.m_50 = self._make(0.5).fit(
+            Xsub, y, sample_weight=sample_weight,
+            categorical_feature=self.categorical_cols or 'auto'
+        )
+        self.m_90 = self._make(0.9).fit(
+            Xsub, y, sample_weight=sample_weight,
+            categorical_feature=self.categorical_cols or 'auto'
+        )
         return self
 
-    def predict_quantiles(self, X: pd.DataFrame) -> pd.DataFrame:
-        feat_present = [c for c in getattr(self, '_feat_present', self.feature_names) if c in X.columns]
-        out = pd.DataFrame(index=X.index)
-        for a in [0.1, 0.5, 0.9]:
-            m = self.m[a]
-            if isinstance(m, Pipeline):
-                out[f'p{int(a*100)}'] = m.predict(X[feat_present])
-            else:
-                out[f'p{int(a*100)}'] = m.predict(X)
-        return out
+    def _prepare_X_infer(self, X: pd.DataFrame) -> pd.DataFrame:
+        Xsub = X[self.feature_names].copy()
+        # те же категории на инференсе
+        for c in self.categorical_cols:
+            if c in Xsub.columns:
+                Xsub[c] = Xsub[c].astype('category')
+        # и защита от внезапных нечисловых типов
+        for c in Xsub.columns:
+            s = Xsub[c]
+            if (c not in self.categorical_cols) and (not is_numeric_dtype(s)):
+                Xsub[c] = pd.to_numeric(s, errors='coerce').astype(float).fillna(0.0)
+        return Xsub
+
+    def predict_quantiles(self, X: pd.DataFrame, quantiles=None) -> pd.DataFrame:
+        Xsub = self._prepare_X_infer(X)
+        p10 = np.asarray(self.m_10.predict(Xsub))
+        p50 = np.asarray(self.m_50.predict(Xsub))
+        p90 = np.asarray(self.m_90.predict(Xsub))
+        # построчная монотонность + неотрицательность
+        arr = np.vstack([p10, p50, p90]).T.astype(float)  # (n, 3)
+        arr[arr < 0.0] = 0.0
+        arr = np.sort(arr, axis=1)
+        return pd.DataFrame(arr, columns=["p10", "p50", "p90"])
+
+    def predict(self, X: pd.DataFrame) -> pd.DataFrame:
+        return self.predict_quantiles(X)

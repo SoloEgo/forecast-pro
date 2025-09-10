@@ -1,9 +1,9 @@
 {
-  "generated_at": "2025-09-09T14:55:49.217080Z",
+  "generated_at": "2025-09-10T07:14:41.620141Z",
   "freq": "monthly",
   "eta": 5.0,
   "halflife": 18,
-  "rows": 4587,
+  "rows": 2054,
   "features_total": 58,
   "y_col": "qty",
   "date_min": "2021-07-31 00:00:00",
@@ -66,10 +66,7 @@
         "comp_promo_share_6m",
         "comp_promo_share_12m"
       ],
-      "cat_cols": [
-        "sku",
-        "category"
-      ]
+      "cat_cols": null
     },
     {
       "name": "cat",

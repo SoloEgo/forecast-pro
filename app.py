@@ -19,6 +19,16 @@ from src.pro.optimize import main as optimize_main
 from src.pro.smart_train import main as smart_train_main
 from src.pro.forecast import main as forecast_main
 
+import lightgbm as lgb
+
+class _SilentLGBLogger:
+    def info(self, msg): 
+        pass
+    def warning(self, msg): 
+        pass
+
+lgb.register_logger(_SilentLGBLogger())
+
 # ====== совместимость rerun ======
 try:
     _rerun = st.rerun            # новые версии (>=1.30)
@@ -216,7 +226,7 @@ def plot_category_interactive(history: pd.DataFrame,
                               show_band: bool = True,
                               show_points: bool = True,
                               show_promo: bool = True):
-    """График по категории: история = сумма qty; прогноз = сумма p10/p50/p90 по всем SKU категории."""
+    """График по категории: история = сумма qty; прогноз = квантиль суммы (MC по p10/p50/p90 каждого SKU)."""
     h = history.copy(); f = forecast.copy()
     h["category"] = h.get("category", "ALL").astype(str)
     f["category"] = f.get("category", "ALL").astype(str)
@@ -232,8 +242,49 @@ def plot_category_interactive(history: pd.DataFrame,
     f["date"] = pd.to_datetime(f["date"], errors="coerce")
 
     h_agg = h.groupby("date", as_index=False)["qty"].sum()
-    cols_to_sum = [c for c in ["p10", "p50", "p90"] if c in f.columns]
-    f_agg = f.groupby("date", as_index=False)[cols_to_sum].sum() if cols_to_sum else f.copy()
+
+    # --- MC агрегатор квантилей суммы по SKU ---
+    def _draw_from_three_quantiles(p10, p50, p90, size):
+        u = np.random.rand(size)
+        x = np.where(u <= 0.5, p10 + (p50 - p10) * (u / 0.5),
+                             p50 + (p90 - p50) * ((u - 0.5) / 0.5))
+        x = np.where(u < 0.1, p10, x)
+        x = np.where(u > 0.9, p90, x)
+        return x
+
+    def _aggregate_group_quantiles_mc(fcat: pd.DataFrame, n_draws: int = 2000) -> pd.DataFrame:
+        out = []
+        for dt, g in fcat.groupby("date"):
+            s = np.zeros(n_draws, dtype=float)
+            for _, r in g.iterrows():
+                p10 = float(r.get("p10", 0.0)) if "p10" in g.columns else 0.0
+                p50 = float(r.get("p50", 0.0)) if "p50" in g.columns else 0.0
+                p90 = float(r.get("p90", 0.0)) if "p90" in g.columns else 0.0
+                # страховка от NaN и отрицательных значений
+                p10 = max(p10, 0.0); p50 = max(p50, 0.0); p90 = max(p90, 0.0)
+                # локальная монотонность
+                arr = np.array([p10, p50, p90], dtype=float); arr.sort()
+                d = _draw_from_three_quantiles(arr[0], arr[1], arr[2], n_draws)
+                s += np.maximum(d, 0.0)
+            out.append({
+                "date": pd.to_datetime(dt),
+                "p10": float(np.quantile(s, 0.10)),
+                "p50": float(np.quantile(s, 0.50)),
+                "p90": float(np.quantile(s, 0.90)),
+            })
+        res = pd.DataFrame(out).sort_values("date")
+        # финальная монотонность
+        if not res.empty:
+            qq = np.vstack([res["p10"].values, res["p50"].values, res["p90"].values])
+            qq.sort(axis=0)
+            res["p10"], res["p50"], res["p90"] = qq[0], qq[1], qq[2]
+        return res
+    if {"p10","p50","p90"}.issubset(set(f.columns)) and len(f):
+        f_agg = _aggregate_group_quantiles_mc(f)
+    else:
+        cols_to_sum = [c for c in ["p10", "p50", "p90"] if c in f.columns]
+        f_agg = f.groupby("date", as_index=False)[cols_to_sum].sum() if cols_to_sum else f.copy()
+
 
     h_agg.sort_values("date", inplace=True)
     f_agg.sort_values("date", inplace=True)
